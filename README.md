@@ -4,6 +4,10 @@ Author: Abdelrahman Rashad
 
 A production-grade FastAPI backend that replaces the Streamlit interface in Anthropic's [`computer-use-demo`](https://github.com/anthropics/anthropic-quickstarts/tree/main/computer-use-demo) with a concurrent, streaming, multi-session API.
 
+## Demo
+
+[Watch the demo on Google Drive](https://drive.google.com/file/d/1iNmg1KYfIoUnpPe549EhixIBlg-MQU65/view?usp=sharing)
+
 ## Features
 
 - **Dynamic concurrency** — one isolated Docker container per session; no fixed pool size
