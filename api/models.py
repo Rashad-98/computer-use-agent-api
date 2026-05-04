@@ -59,3 +59,15 @@ class Screenshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     message: Mapped["Message"] = relationship("Message", back_populates="screenshots")
+
+
+class SessionEvent(Base):
+    __tablename__ = "session_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(
+        String, ForeignKey("sessions.id", ondelete="CASCADE"), index=True
+    )
+    seq: Mapped[int] = mapped_column(Integer)
+    data: Mapped[str] = mapped_column(Text)  # raw JSON from agent
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

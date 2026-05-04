@@ -5,10 +5,12 @@ Responsibilities:
   - Allocate free OS ports atomically
   - Spawn / stop one agent container per session
   - Health-check newly spawned containers before accepting work
+  - Consume + persist SSE stream from agent to session_events table
   - TTL reaper: stop containers idle > IDLE_TTL_SECONDS (default 1 hr)
 """
 
 import asyncio
+import json
 import logging
 import os
 import socket
@@ -17,9 +19,12 @@ from datetime import UTC, datetime, timedelta
 import docker
 import docker.errors
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 logger = logging.getLogger(__name__)
+
+# Registry of active background consume tasks: session_id → asyncio.Task
+_consume_tasks: dict[str, asyncio.Task] = {}
 
 AGENT_IMAGE = os.environ.get("AGENT_IMAGE", "computer-use-agent:local")
 # Host/IP the API uses to reach agent containers' mapped ports.
@@ -114,6 +119,99 @@ async def wait_for_health(agent_api_port: int, timeout: float = HEALTH_TIMEOUT_S
 
 def agent_api_url(agent_api_port: int) -> str:
     return f"http://{AGENT_HOST}:{agent_api_port}"
+
+
+# ---------------------------------------------------------------------------
+# SSE consumer — eagerly reads agent stream, persists to session_events table
+# ---------------------------------------------------------------------------
+
+async def consume_and_persist(session_id: str, agent_api_port: int, db_factory) -> None:
+    """Read the agent's SSE stream, persist every event to session_events, then update session status."""
+    from models import Message, Session, SessionEvent  # local import avoids circular dependency
+
+    url = f"http://{AGENT_HOST}:{agent_api_port}/stream"
+    seq = 0
+    text_blocks: list[str] = []
+    final_status = "completed"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            async with client.stream("GET", url, timeout=None) as response:
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    raw = line[len("data:"):].strip()
+                    if not raw:
+                        continue
+
+                    seq += 1
+                    async with db_factory() as db:
+                        db.add(SessionEvent(session_id=session_id, seq=seq, data=raw))
+                        await db.commit()
+
+                    try:
+                        event = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+
+                    event_type = event.get("type")
+                    if event_type == "text":
+                        text_blocks.append(event.get("content", ""))
+                    elif event_type == "error":
+                        final_status = "error"
+                        break
+                    elif event_type == "done":
+                        break
+
+        # Aggregate assistant text into the messages table for history
+        if text_blocks:
+            combined_text = "\n".join(t for t in text_blocks if t)
+            content_blocks = [{"type": "text", "text": combined_text}]
+            async with db_factory() as db:
+                result = await db.execute(
+                    select(func.coalesce(func.max(Message.seq), 0)).where(
+                        Message.session_id == session_id
+                    )
+                )
+                next_seq = (result.scalar() or 0) + 1
+                db.add(
+                    Message(
+                        session_id=session_id,
+                        role="assistant",
+                        content=json.dumps(content_blocks),
+                        seq=next_seq,
+                    )
+                )
+                await db.commit()
+
+    except asyncio.CancelledError:
+        final_status = "error"
+        raise
+    except Exception:
+        logger.exception("consume_and_persist error for session %s", session_id)
+        final_status = "error"
+    finally:
+        _consume_tasks.pop(session_id, None)
+        try:
+            async with db_factory() as db:
+                session = await db.get(Session, session_id)
+                if session is not None:
+                    session.status = final_status
+                    session.updated_at = datetime.now(UTC)
+                    await db.commit()
+        except Exception:
+            logger.exception("Failed to update session status for %s", session_id)
+
+
+def start_consume_task(session_id: str, agent_api_port: int, db_factory) -> None:
+    task = asyncio.create_task(consume_and_persist(session_id, agent_api_port, db_factory))
+    _consume_tasks[session_id] = task
+
+
+def cancel_consume_task(session_id: str) -> None:
+    task = _consume_tasks.pop(session_id, None)
+    if task is not None and not task.done():
+        task.cancel()
 
 
 # ---------------------------------------------------------------------------
