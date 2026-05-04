@@ -1,0 +1,51 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/computeruse
+      # Agent containers are spawned as siblings on the host; reach their mapped
+      # ports via host.docker.internal (resolved to host-gateway on Linux below).
+      AGENT_HOST: host.docker.internal
+      AGENT_IMAGE: ${AGENT_IMAGE:-computer-use-agent:local}
+      IDLE_TTL_SECONDS: ${IDLE_TTL_SECONDS:-3600}
+    volumes:
+      # Docker socket required for the Python Docker SDK to spawn agent containers
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      # Resolves host.docker.internal on Linux (no-op on Mac/Windows where it's built-in)
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - backend
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: computeruse
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - backend
+
+volumes:
+  pg_data:
+
+networks:
+  backend:
+    driver: bridge
