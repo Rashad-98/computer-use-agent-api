@@ -1,4 +1,6 @@
-# Abdelrahman Rashad — Computer Use Agent API
+Author: Abdelrahman Rashad
+
+# Computer Use Agent API
 
 A production-grade FastAPI backend that replaces the Streamlit interface in Anthropic's [`computer-use-demo`](https://github.com/anthropics/anthropic-quickstarts/tree/main/computer-use-demo) with a concurrent, streaming, multi-session API.
 
