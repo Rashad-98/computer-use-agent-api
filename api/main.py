@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import session_manager
 from database import AsyncSessionFactory, Base, engine
-from routers import messages, sessions
+from routers import messages, sessions, stream
 
 
 @asynccontextmanager
@@ -36,6 +36,7 @@ app.add_middleware(
 
 app.include_router(sessions.router)
 app.include_router(messages.router)
+app.include_router(stream.router)
 
 
 @app.get("/health")

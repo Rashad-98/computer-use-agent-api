@@ -68,6 +68,8 @@ async def delete_session(session_id: str, db: AsyncSession = Depends(get_db)) ->
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    session_manager.cancel_consume_task(session_id)
+
     if session.container_id:
         await session_manager.stop_session_container(session.container_id)
 

@@ -1,11 +1,13 @@
 import json
 from datetime import UTC, datetime
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db
+import session_manager
+from database import AsyncSessionFactory, get_db
 from models import Message, Session
 from schemas import MessageCreate, MessageResponse
 
@@ -59,4 +61,29 @@ async def send_message(
 
     await db.commit()
     await db.refresh(msg)
+
+    # Load full message history to send to agent
+    history_result = await db.execute(
+        select(Message).where(Message.session_id == session_id).order_by(Message.seq)
+    )
+    all_messages = [
+        {"role": m.role, "content": json.loads(m.content)}
+        for m in history_result.scalars().all()
+    ]
+
+    # Kick off the agent task (fire-and-forget — events arrive via SSE stream)
+    agent_url = session_manager.agent_api_url(session.agent_api_port)
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{agent_url}/task",
+                json={"messages": all_messages, "model": session.model},
+                timeout=10.0,
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Agent container unreachable: {exc}") from exc
+
+    # Start the background consumer that persists events and updates session status
+    session_manager.start_consume_task(session_id, session.agent_api_port, AsyncSessionFactory)
+
     return msg
