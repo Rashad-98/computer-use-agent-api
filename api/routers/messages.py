@@ -32,8 +32,10 @@ async def send_message(
     session = await db.get(Session, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if session.status in ("completed", "error"):
-        raise HTTPException(status_code=409, detail=f"Session is {session.status}")
+    if session.status == "error":
+        raise HTTPException(status_code=409, detail="Session is in error state")
+    if session.agent_api_port is None:
+        raise HTTPException(status_code=409, detail="Session has no agent container")
 
     # Determine next sequence number
     result = await db.execute(
@@ -56,7 +58,10 @@ async def send_message(
     if session.title is None:
         session.title = body.content[:120]
 
-    # Bump updated_at so the TTL reaper doesn't consider this session idle
+    # Bump updated_at so the TTL reaper doesn't consider this session idle.
+    # If a prior task completed, reset to running for this new turn.
+    if session.status == "completed":
+        session.status = "running"
     session.updated_at = datetime.now(UTC)
 
     await db.commit()
