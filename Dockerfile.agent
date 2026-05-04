@@ -1,0 +1,17 @@
+FROM ghcr.io/anthropics/anthropic-quickstarts:computer-use-demo-latest
+
+# computer_use_demo/ is already at /home/computeruse/ in the upstream image — don't copy it again.
+# WORKDIR stays as /home/computeruse so all upstream startup scripts (start_all.sh, etc.) resolve correctly.
+
+USER root
+RUN pip install --no-cache-dir fastapi "uvicorn[standard]"
+
+COPY --chown=computeruse:computeruse agent/agent_server.py /home/computeruse/agent_server.py
+COPY --chown=computeruse:computeruse agent/agent_entrypoint.sh /home/computeruse/agent_entrypoint.sh
+RUN chmod +x /home/computeruse/agent_entrypoint.sh
+
+USER computeruse
+
+EXPOSE 8001
+
+ENTRYPOINT ["/home/computeruse/agent_entrypoint.sh"]
